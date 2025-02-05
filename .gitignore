@@ -1,0 +1,8 @@
+.env
+.cache
+/venv
+/temp
+/images
+/tracks
+/collections
+/settings
