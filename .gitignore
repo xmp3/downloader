@@ -1,6 +1,6 @@
 .env
 .cache
-/venv
+/*venv
 /temp
 /images
 /tracks

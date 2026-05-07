@@ -1,246 +1,154 @@
-import os
-import re
-import csv
-import shutil
-import requests
-from pytubefix import YouTube
+import os, re, csv, shutil, requests
+from yt_dlp import YoutubeDL
 from pydub import AudioSegment
 from unidecode import unidecode
-from dotenv import load_dotenv
 
-load_dotenv()
-CLIENT_ID = os.getenv('CLIENT_ID')
-CLIENT_SECRET = os.getenv('CLIENT_SECRET')
-
-from spotipy import Spotify
-from spotipy.oauth2 import SpotifyClientCredentials
-
-spotify = Spotify(
-    client_credentials_manager=SpotifyClientCredentials(
-        client_id=CLIENT_ID,
-        client_secret=CLIENT_SECRET
-    )
-)
-
-TRACK_COLUMS = ['title', 'artist', 'album', 'cover', 'file']
-COLLECTION_COLUMNS = ['username', 'filename', 'name', 'description', 'image']
-USERNAME = 'xmp3'
+TRACK_COLUMNS = ['title', 'artist', 'album', 'cover', 'file', 'collection_id']
+COLLECTION_COLUMNS = ['id', 'name', 'description', 'image']
 
 
 def main():
-    while True:
-        try:
-            menu()
-        except KeyboardInterrupt:
-            exit(0)
-
-
-def menu():
+  while True:
     print('1 - Add Track')
     print('2 - Add Artist')
     print('3 - Exit')
 
     try:
-        option = int(input('Option:\n>>> '))
-    except ValueError:
-        print('Please enter a valid option')
-        return
+      match int(input('>>> ')):
+        case 1: add_track()
+        case 2: add_artist(input('Artist:\n>>> '))
+        case 3: exit(0)
 
-    match option:
-        case 1:
-            add_track('tracks', 'images', 'collections')
-        case 2:
-            add_artist(input('Artist Name:\n>>> '), 'images', 'settings')
-        case 3:
-            exit(0)
+    except KeyboardInterrupt:
+      exit(0)
+
+    except Exception as error:
+      print(error)
 
 
-def add_track(audio_dir, image_dir, csv_dir):
-    os.makedirs(audio_dir, exist_ok=True)
-    os.makedirs(image_dir, exist_ok=True)
-    os.makedirs(csv_dir, exist_ok=True)
+def add_track():
+  name, mp3 = youtube_mp3(input('YouTube URL:\n>>> '))
+  artist, album = track_image(name)
 
-    print('Downloading MP3 from YouTube...')
-    try:
-        mp3 = download_youtube_mp3(input('YouTube URL:\n>>> '), audio_dir)
-        name, mp3_filename = mp3
-    except Exception as exception_info:
-        print(exception_info)
-        exit(1)
-    print(f'{mp3_filename} downloaded successfully.')
+  collection_id = snake_case(artist)
 
-    print('Downloading track image from Spotify...')
-    search = name
-    while True:
-        try:
-            track_image = download_track_image(search, image_dir)
-            artist_name, album_name, image_path = track_image
-        except Exception as exception_info:
-            print(exception_info)
-            exit(1)
-        print('Track image downloaded successfully.')
-        new_artist_name = input(f'Artist Name (or {artist_name}):\n>>> ')
-        if new_artist_name:
-            option = input('Download again? (Y/n):\n>>> ')
-            option = option.lower()
-            if option != 'n' or option != 'N':
-                search = f'{name} {new_artist_name}'
-                os.remove(image_path)
-                print('Downloading track image from Spotify again...')
-                continue
-            else:
-                break
-        else:
-            break
+  save_csv(
+    f'collections/dataframes/{collection_id}.csv',
+    TRACK_COLUMNS,
+    [name, artist, album, jpeg(album), mp3, collection_id]
+  )
 
-    cover = jpeg_extension(album_name)
-    data = [name, artist_name, album_name, cover, mp3_filename]
-    csv_filename = csv_extension(new_artist_name or artist_name)
-    csv_path = join(csv_dir, csv_filename)
-    save_as_csv(csv_path, TRACK_COLUMS, data)
-    print(f'Successfully saved to {csv_path}')
+  print('Track added.')
 
 
-def add_artist(artist_name, image_dir, csv_dir):
-    os.makedirs(image_dir, exist_ok=True)
-    os.makedirs(csv_dir, exist_ok=True)
+def add_artist(query):
+  name = artist_image(query)
 
-    print('Downloading artist image from Spotify...')
-    try:
-        download_artist_image(artist_name, image_dir)
-    except Exception as exception_info:
-        print(exception_info)
-        exit(1)
-    print('Image downloaded successfully.')
+  save_csv(
+    'settings/collections.csv',
+    COLLECTION_COLUMNS,
+    [snake_case(name), name, 'Artist', jpeg(name)]
+  )
 
-    filename = snake_case(artist_name)
-    cover = jpeg_extension(artist_name)
-    data = [USERNAME, filename, artist_name, 'Artist', cover]
-    csv_path = join(csv_dir, 'collections.csv')
-    save_as_csv(csv_path, COLLECTION_COLUMNS, data)
-    print(f'Successfully saved to {csv_path}')
+  sort_csv('settings/collections.csv')
+
+  print('Artist added.')
 
 
-def download_youtube_mp3(youtube_url, output_dir):
-    name, mp4_path = download_youtube_mp4(youtube_url, 'temp')
-    name = input(f'Name (or {name}):\n>>> ') or name
-    mp3_filename = mp3_extension(name)
-    mp3_path = join(output_dir, mp3_filename)
+def youtube_mp3(url):
+  os.makedirs('temp', exist_ok=True)
+  os.makedirs('tracks', exist_ok=True)
 
-    print('Converting to MP3...')
-    try:
-        convert_mp4_to_mp3(mp4_path, mp3_path)
-    except IndexError:
-        raise Exception('No audio stream found in the video file.')
-    print('Conversion completed.')
+  with YoutubeDL({'format': 'mp4/bestaudio/best', 'outtmpl': 'temp/%(title)s.%(ext)s', 'quiet': True}) as ydl:
+    info = ydl.extract_info(url, download=True)
+    mp4 = ydl.prepare_filename(info)
 
-    try:
-        shutil.rmtree('temp')
-    except OSError as e:
-        print(e.strerror)
+  name = input(f'Name (or {info["title"]}):\n>>> ') or info['title']
+  mp3 = mp3_ext(name)
 
-    return name, mp3_filename
+  AudioSegment.from_file(mp4).export(f'tracks/{mp3}', format='mp3', bitrate='320k')
+
+  shutil.rmtree('temp', ignore_errors=True)
+
+  return name, mp3
 
 
-def download_youtube_mp4(youtube_url, output_dir):
-    print('Loading...')
-    video = YouTube(youtube_url).streams
-    video = video.filter(progressive=True, file_extension='mp4')
-    video = video.first()
+def track_image(name):
+  data = requests.get(f'https://api.deezer.com/search?q={name}').json()['data'][0]
 
-    if not video:
-        raise Exception('No video stream available.')
+  artist = data['artist']['name']
+  album = data['album']['title']
 
-    print('Downloading MP4...')
-    mp4_path = video.download(output_path=output_dir)
-    print(f'MP4 downloaded successfully.')
+  image(data['album']['cover_xl'], f'images/{jpeg(album)}')
 
-    mp4_filename = os.path.basename(mp4_path)
-    mp4_name, _ = os.path.splitext(mp4_filename)
-    return mp4_name, mp4_path
+  return artist, album
 
 
-def convert_mp4_to_mp3(mp4_path, mp3_path):
-    audio = AudioSegment.from_file(mp4_path)
-    audio.export(mp3_path, format='mp3', bitrate='320k')
+def artist_image(query):
+  data = requests.get(f'https://api.deezer.com/search/artist?q={query}').json()['data'][0]
+
+  name = data['name']
+
+  image(data['picture_xl'], f'images/{jpeg(name)}')
+
+  return name
 
 
-def download_track_image(track_name, output_dir):
-    results = spotify.search(q=track_name, type='track', limit=1)
-    try:
-        track = results['tracks']['items'][0]
-        album = track['album']
-        image_url = album['images'][0]['url']
-        album_name = album['name']
-        filename = jpeg_extension(album_name)
-        save_path = os.path.join(output_dir, filename)
-        if not os.path.exists(save_path):
-            download_image(image_url, save_path)
-        else:
-            print(f'{filename} already exists.')
-        artists = track['artists']
-        artist_names = ', '.join([artist['name'] for artist in artists])
-        return artist_names, album_name, save_path
-    except (KeyError, IndexError):
-        raise Exception(f'No album image found for track: {track_name}')
+def image(url, path):
+  os.makedirs(os.path.dirname(path), exist_ok=True)
+
+  if os.path.exists(path):
+    return
+
+  response = requests.get(url)
+
+  if response.status_code != 200:
+    raise Exception(f'Failed to download {url}')
+
+  with open(path, 'wb') as file:
+    file.write(response.content)
 
 
-def download_artist_image(artist_name, output_dir):
-    results = spotify.search(q=artist_name, type='artist', limit=1)
-    try:
-        artist = results['artists']['items'][0]
-        image_url = artist['images'][0]['url']
-        filename = jpeg_extension(artist['name'])
-        save_path = os.path.join(output_dir, filename)
-        if not os.path.exists(save_path):
-            download_image(image_url, save_path)
-        else:
-            print(f'{filename} already exists.')
-    except (KeyError, IndexError):
-        raise Exception(f'No image found for artist: {artist_name}')
+def save_csv(path, headers, data):
+  os.makedirs(os.path.dirname(path), exist_ok=True)
+
+  exists = os.path.isfile(path)
+
+  with open(path, 'a', newline='') as file:
+    writer = csv.writer(file)
+
+    if not exists:
+      writer.writerow(headers)
+
+    writer.writerow(data)
 
 
-def download_image(url, save_path):
-    response = requests.get(url)
-    if response.status_code == 200:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        with open(save_path, 'wb') as file:
-            file.write(response.content)
-        print(f'{save_path} download completed.')
-    else:
-        raise Exception(f'Failed to download image from {url}')
+def sort_csv(path):
+  with open(path, newline='') as file:
+    rows = list(csv.reader(file))
+
+  header, data = rows[0], rows[1:]
+
+  data.sort(key=lambda row: row[0].lower())
+
+  with open(path, 'w', newline='') as file:
+    writer = csv.writer(file)
+
+    writer.writerow(header)
+    writer.writerows(data)
 
 
-def save_as_csv(path, headers, data):
-    file_exists = os.path.isfile(path)
-    with open(path, mode='a', newline='') as file:
-        writer = csv.writer(file)
-        if not file_exists:
-            writer.writerow(headers)
-        writer.writerow(data)
+def snake_case(text):
+  return re.sub(r'[^\w_]', '', re.sub(r'\s+', '_', unidecode(text.strip().lower())))
 
 
-def join(directory, filename):
-    return os.path.join(directory, filename)
+def mp3_ext(name):
+  return f'{snake_case(name)}.mp3'
 
 
-def mp3_extension(name):
-    return f'{snake_case(name)}.mp3'
-
-
-def jpeg_extension(name):
-    return f'{snake_case(name)}.jpeg'
-
-
-def csv_extension(name):
-    return f'{snake_case(name)}.csv'
-
-
-def snake_case(string):
-    string = unidecode(string.strip().lower())
-    string = re.sub(r'\s+', '_', string)
-    return re.sub(r'[^\w_]', '', string)
+def jpeg(name):
+  return f'{snake_case(name)}.jpeg'
 
 
 if __name__ == '__main__':
-    main()
+  main()
