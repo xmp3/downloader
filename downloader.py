@@ -28,7 +28,12 @@ def main():
 
 def add_track():
   name, mp3 = youtube_mp3(input('YouTube URL:\n>>> '))
-  artist, album = track_image(name)
+
+  artist_query = input('Artist (optional):\n>>> ').strip()
+
+  search = f'{name} {artist_query}' if artist_query else name
+
+  artist, album = track_image(search)
 
   collection_id = snake_case(artist)
 
@@ -73,8 +78,8 @@ def youtube_mp3(url):
   return name, mp3
 
 
-def track_image(name):
-  data = requests.get(f'https://api.deezer.com/search?q={name}').json()['data'][0]
+def track_image(search):
+  data = requests.get(f'https://api.deezer.com/search?q={search}').json()['data'][0]
 
   artist = data['artist']['name']
   album = data['album']['title']
